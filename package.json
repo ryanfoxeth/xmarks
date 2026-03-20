@@ -1,0 +1,22 @@
+{
+  "name": "xmarks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "xmarks": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "xmarks": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
