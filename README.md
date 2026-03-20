@@ -117,6 +117,46 @@ xmarks (Node.js daemon)
   └── .tweet-ids         ← dedup index
 ```
 
+## QMD Integration (Recommended)
+
+[QMD](https://github.com/tobi/qmd) is a local semantic search engine for markdown files. Adding your xmarks vault as a QMD collection gives you semantic search, query expansion, and reranking across all your bookmarks — far more powerful than grep for finding conceptually related content.
+
+```bash
+# Install QMD
+npm install -g @tobilu/qmd
+
+# Add your xmarks vault as a collection in ~/.config/qmd/index.yml:
+#   xmarks:
+#     path: ~/Obsidian/xmarks
+#     glob: "bookmarks/**/*.md"
+
+# Index your bookmarks
+qmd embed -c xmarks
+
+# Search
+qmd search "AI agent frameworks" -c xmarks
+qmd query "what are people saying about open source LLMs" -c xmarks
+```
+
+With QMD indexed, you can search by meaning rather than exact keywords — e.g., searching "startup fundraising" will surface bookmarks about seed rounds, pitch decks, and VC even if none of them contain the word "fundraising."
+
+## Claude Code Skill
+
+xmarks includes a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill for natural-language querying of your bookmarks. Copy the skill file to your Claude Code skills directory:
+
+```bash
+mkdir -p ~/.claude/skills/xmarks
+cp SKILL.md ~/.claude/skills/xmarks/SKILL.md
+```
+
+Then use `/xmarks` in any Claude Code session:
+
+- `/xmarks what have I bookmarked about AI agents this month`
+- `/xmarks find everything from @anthropic`
+- `/xmarks summarize the crypto bookmarks from last week`
+
+The skill uses QMD for semantic search when available, and falls back to grep/glob for precise filtering. It can also trigger syncs and categorization directly from the conversation.
+
 ## Security
 
 - **No keychain access** — You explicitly provide your own cookies via the setup wizard
