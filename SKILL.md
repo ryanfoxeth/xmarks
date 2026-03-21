@@ -1,60 +1,93 @@
 ---
 name: xmarks
-description: Search and query your X/Twitter bookmarks
-allowed-tools: Bash(npx:*), Read, Grep, Glob
+description: Search and query your content library — X/Twitter bookmarks and YouTube transcripts
+allowed-tools: Read, Grep, Glob, mcp__qmd__query, mcp__qmd__get, mcp__qmd__multi_get, Bash(npx:*)
 ---
 
-Query your X/Twitter bookmarks stored in your xmarks Obsidian vault.
+Search your xmarks content vault at `/Users/ryan/Obsidian/xmarks/`. Contains X/Twitter bookmarks and YouTube video transcripts with AI summaries, all with structured frontmatter and AI categorization.
 
 ## Vault Structure
 
-- `bookmarks/*.md` — One file per bookmarked tweet with YAML frontmatter
-- Frontmatter fields: `tweetId`, `author`, `authorName`, `date`, `bookmarkedAt`, `categories`, `semanticTags`, `source`, `url`, `categorized`
-- Body contains tweet text, optional `## Media`, `## Links`, `## Entities` sections
+```
+~/Obsidian/xmarks/
+  bookmarks/*.md   — X/Twitter bookmarks (source: bookmark)
+  youtube/*.md     — YouTube videos with AI summaries (source: youtube)
+  media/           — Thumbnails
+```
 
-## Available Categories
+### Twitter Bookmark Frontmatter
+`tweetId`, `author`, `authorName`, `date`, `bookmarkedAt`, `categories`, `semanticTags`, `source`, `url`, `categorized`
+Body: tweet text + optional `## Media`, `## Links`, `## Entities`
+
+### YouTube Video Frontmatter
+`videoId`, `title`, `channel`, `url`, `date`, `ingestedAt`, `duration`, `viewCount`, `likeCount`, `source`, `categories`, `semanticTags`, `categorized`
+Body: title + metadata + AI summary (PHASE Analysis) or transcript excerpt
+
+## Categories
 
 tech, ai, business, design, culture, crypto, science, finance, health, productivity, marketing, engineering, open-source, startups, career, politics, humor, media, education, other
 
 ## How to Search
 
-Use QMD for semantic search across bookmarks (if installed):
+### QMD (semantic search — preferred)
 
 ```
-# Keyword search (fast)
-mcp__qmd__search(query, collection: "xmarks")
-
-# Semantic/meaning search (slower, finds related concepts)
-mcp__qmd__vector_search(query, collection: "xmarks")
-
-# Deep search (thorough, auto-expands query)
-mcp__qmd__deep_search(query, collection: "xmarks")
+mcp__qmd__query(
+  searches: [
+    { type: "lex", query: "keyword search terms" },
+    { type: "vec", query: "natural language question" }
+  ],
+  collections: ["xmarks"],
+  intent: "what you're looking for"
+)
 ```
 
-Use Grep for precise filtering:
+### Grep (precise filtering)
 
 ```bash
-# Find bookmarks by author
+# Twitter: by author
 Grep(pattern: 'author: "@elonmusk"', path: "~/Obsidian/xmarks/bookmarks")
 
-# Find bookmarks by category
-Grep(pattern: 'categories:.*ai', path: "~/Obsidian/xmarks/bookmarks")
+# YouTube: by channel
+Grep(pattern: 'channel: "All-In Podcast"', path: "~/Obsidian/xmarks/youtube")
 
-# Find bookmarks by semantic tag
-Grep(pattern: 'semanticTags:.*large-language-models', path: "~/Obsidian/xmarks/bookmarks")
+# Either: by category or tag
+Grep(pattern: 'categories:.*ai', path: "~/Obsidian/xmarks")
 
-# Find bookmarks by date range
-Glob(pattern: "bookmarks/2026-01-*", path: "~/Obsidian/xmarks")
+# Either: by semantic tag
+Grep(pattern: 'semanticTags:.*large-language-models', path: "~/Obsidian/xmarks")
 ```
+
+### Glob (date ranges)
+
+```bash
+# Twitter bookmarks from January 2026
+Glob(pattern: "bookmarks/2026-01-*", path: "~/Obsidian/xmarks")
+
+# YouTube videos from March 2026
+Glob(pattern: "youtube/2026-03-*", path: "~/Obsidian/xmarks")
+
+# All content from a date
+Glob(pattern: "*/2026-03-15-*", path: "~/Obsidian/xmarks")
+```
+
+## Filtering by Source
+
+When the user asks specifically about tweets/bookmarks, search only `bookmarks/`.
+When they ask about YouTube/videos, search only `youtube/`.
+When the query is general, search across both.
+
+With QMD, all sources are in the `xmarks` collection. Use grep/glob path filtering to narrow by source when needed.
 
 ## Common Queries
 
 When the user asks to:
-- **Search bookmarks**: Use QMD search with the xmarks collection
-- **Find by author**: Grep for `author: "@handle"`
-- **Find by topic/category**: Grep for category or semanticTag, or use QMD for fuzzy matching
-- **Recent bookmarks**: Glob for recent date patterns or sort by `bookmarkedAt`
-- **Summarize a topic**: Search for the topic, read matching bookmarks, synthesize
+- **Search all content**: QMD query with xmarks collection
+- **Find tweets by author**: Grep for `author: "@handle"` in bookmarks/
+- **Find videos by channel**: Grep for `channel: "Name"` in youtube/
+- **Find by topic**: Grep for category/semanticTag, or QMD for fuzzy
+- **Recent items**: Glob for date patterns
+- **Summarize a topic**: Search, read matches, synthesize
 - **Stats/counts**: Run `npm run xmarks -- status` from the xmarks project directory
 - **Trigger sync**: Run `npm run xmarks -- sync` from the xmarks project directory
 - **Categorize uncategorized**: Run `npm run xmarks -- categorize` from the xmarks project directory
