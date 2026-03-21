@@ -26,3 +26,32 @@ export async function downloadThumbnails(vaultPath: string, tweet: TweetData): P
 
   return downloaded
 }
+
+// Generic media download for any source
+
+export interface MediaDownload {
+  url: string
+  filename: string
+}
+
+export async function downloadMedia(vaultPath: string, items: MediaDownload[]): Promise<number> {
+  let downloaded = 0
+  const mediaDir = join(vaultPath, 'media')
+
+  for (const item of items) {
+    const filepath = join(mediaDir, item.filename)
+    if (existsSync(filepath)) continue
+
+    try {
+      const res = await fetch(item.url)
+      if (!res.ok) continue
+      const buffer = Buffer.from(await res.arrayBuffer())
+      writeFileSync(filepath, buffer)
+      downloaded++
+    } catch {
+      // Skip failed downloads silently
+    }
+  }
+
+  return downloaded
+}

@@ -3,6 +3,19 @@ import { join } from 'path'
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto'
 import { hostname, userInfo } from 'os'
 
+export interface SourceConfig {
+  enabled: boolean
+}
+
+export interface YouTubeSourceConfig extends SourceConfig {
+  watchPath: string
+}
+
+export interface SourcesConfig {
+  twitter?: SourceConfig
+  youtube?: YouTubeSourceConfig
+}
+
 export interface XmarksConfig {
   vaultPath: string
   syncIntervalMinutes: number
@@ -12,6 +25,7 @@ export interface XmarksConfig {
     ct0: string       // encrypted
   }
   anthropicApiKey?: string // encrypted
+  sources?: SourcesConfig
 }
 
 const CONFIG_FILENAME = 'xmarks.config.json'

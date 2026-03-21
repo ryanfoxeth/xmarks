@@ -1,8 +1,9 @@
 import { execSync } from 'child_process'
-import { getDecryptedCredentials, type XmarksConfig } from './config.js'
-import { syncBookmarks } from './sync.js'
-import { categorizeBookmarks } from './categorize.js'
-import { getBookmarkCount } from './markdown.js'
+import type { XmarksConfig } from './config.js'
+import { getDecryptedCredentials } from './config.js'
+import { getConfiguredSources, getAllFolders } from './sources/index.js'
+import { categorizeItems } from './categorize.js'
+import { getItemCount } from './markdown.js'
 
 function sendNotification(title: string, message: string): void {
   try {
@@ -10,7 +11,7 @@ function sendNotification(title: string, message: string): void {
       `osascript -e 'display notification "${message.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"'`,
     )
   } catch {
-    // Notification is best-effort, don't crash if it fails
+    // Notification is best-effort
   }
 }
 
@@ -29,11 +30,10 @@ function isAuthError(error: string): boolean {
 }
 
 export async function runDaemon(config: XmarksConfig): Promise<void> {
-  const creds = getDecryptedCredentials(config)
+  const sources = getConfiguredSources(config)
 
-  if (!creds.authToken || !creds.ct0) {
-    console.error('  Twitter credentials not configured. Run: xmarks setup')
-    sendNotification('xmarks', 'Twitter credentials not configured. Run: xmarks setup')
+  if (sources.length === 0) {
+    console.error('  No sources configured. Run: xmarks setup')
     process.exit(1)
   }
 
@@ -42,17 +42,17 @@ export async function runDaemon(config: XmarksConfig): Promise<void> {
   console.log(`\n  xmarks daemon`)
   console.log(`  ─────────────`)
   console.log(`  Vault: ${config.vaultPath}`)
+  console.log(`  Sources: ${sources.map(s => s.name).join(', ')}`)
   console.log(`  Interval: every ${config.syncIntervalMinutes} minutes`)
   console.log(`  Model: ${config.model}`)
   console.log(`  Press Ctrl+C to stop\n`)
 
   // Run immediately on start
-  await runSyncCycle(config, creds)
+  await runSyncCycle(config, sources)
 
   // Then on interval
-  const timer = setInterval(() => void runSyncCycle(config, creds), intervalMs)
+  const timer = setInterval(() => void runSyncCycle(config, sources), intervalMs)
 
-  // Graceful shutdown
   const shutdown = () => {
     console.log('\n  Stopping daemon...')
     clearInterval(timer)
@@ -63,60 +63,61 @@ export async function runDaemon(config: XmarksConfig): Promise<void> {
   process.on('SIGTERM', shutdown)
 }
 
-async function runSyncCycle(
-  config: XmarksConfig,
-  creds: { authToken: string | null; ct0: string | null; apiKey: string | null },
-): Promise<void> {
+async function runSyncCycle(config: XmarksConfig, sources: ReturnType<typeof getConfiguredSources>): Promise<void> {
   const now = new Date().toLocaleTimeString()
-  console.log(`  [${now}] Syncing...`)
+  let totalImported = 0
 
-  try {
-    const result = await syncBookmarks(
-      config.vaultPath,
-      creds.authToken!,
-      creds.ct0!,
-    )
+  for (const source of sources) {
+    console.log(`  [${now}] Syncing ${source.name}...`)
 
-    if (result.error) {
-      console.log(`  [${now}] Sync error: ${result.error}`)
-      if (isAuthError(result.error)) {
+    try {
+      const result = await source.sync(config.vaultPath, config)
+
+      if (result.error) {
+        console.log(`  [${now}] ${source.name} error: ${result.error}`)
+
+        if (source.name === 'twitter' && isAuthError(result.error)) {
+          sendNotification(
+            'xmarks — Cookies Expired',
+            'Twitter session cookies have expired. Run: xmarks setup to refresh.',
+          )
+          console.log('  Twitter cookies expired — other sources will continue.')
+        }
+        continue
+      }
+
+      console.log(`  [${now}] ${source.name}: ${result.imported} new, ${result.skipped} existing, ${result.mediaDownloaded} media`)
+      totalImported += result.imported
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`  [${now}] ${source.name} error: ${msg}`)
+
+      if (source.name === 'twitter' && isAuthError(msg)) {
         sendNotification(
           'xmarks — Cookies Expired',
           'Twitter session cookies have expired. Run: xmarks setup to refresh.',
         )
-        console.log('  Stopping daemon — cookies expired. Run: xmarks setup')
-        process.exit(1)
+        console.log('  Twitter cookies expired — other sources will continue.')
       }
-      return
-    }
-
-    console.log(`  [${now}] Synced: ${result.imported} new, ${result.skipped} existing, ${result.mediaDownloaded} thumbnails`)
-
-    // Auto-categorize if API key is configured and there are new bookmarks
-    if (creds.apiKey && result.imported > 0) {
-      console.log(`  [${now}] Categorizing ${result.imported} new bookmarks...`)
-      const catResult = await categorizeBookmarks(
-        config.vaultPath,
-        creds.apiKey,
-        config.model,
-      )
-      console.log(`  [${now}] Categorized: ${catResult.categorized} done, ${catResult.errors} errors`)
-    }
-
-    const counts = getBookmarkCount(config.vaultPath)
-    console.log(`  [${now}] Total: ${counts.total} bookmarks (${counts.categorized} categorized, ${counts.uncategorized} pending)`)
-    console.log(`  [${now}] Next sync in ${config.syncIntervalMinutes} minutes`)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error(`  [${now}] Error: ${msg}`)
-
-    if (isAuthError(msg)) {
-      sendNotification(
-        'xmarks — Cookies Expired',
-        'Twitter session cookies have expired. Run: xmarks setup to refresh.',
-      )
-      console.log('  Stopping daemon — cookies expired. Run: xmarks setup')
-      process.exit(1)
     }
   }
+
+  // Auto-categorize if API key is configured and there are new items
+  const creds = getDecryptedCredentials(config)
+  if (creds.apiKey && totalImported > 0) {
+    const folders = getAllFolders(config)
+    console.log(`  [${now}] Categorizing ${totalImported} new items...`)
+    const catResult = await categorizeItems(
+      config.vaultPath,
+      folders,
+      creds.apiKey,
+      config.model,
+    )
+    console.log(`  [${now}] Categorized: ${catResult.categorized} done, ${catResult.errors} errors`)
+  }
+
+  const folders = getAllFolders(config)
+  const counts = getItemCount(config.vaultPath, folders)
+  console.log(`  [${now}] Total: ${counts.total} items (${counts.categorized} categorized, ${counts.uncategorized} pending)`)
+  console.log(`  [${now}] Next sync in ${config.syncIntervalMinutes} minutes`)
 }

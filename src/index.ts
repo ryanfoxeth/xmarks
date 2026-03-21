@@ -3,10 +3,10 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { loadConfig, getDecryptedCredentials, ensureVaultStructure } from './config.js'
 import { runSetup } from './setup.js'
-import { syncBookmarks } from './sync.js'
-import { categorizeBookmarks, estimateCost } from './categorize.js'
+import { categorizeItems, estimateCost } from './categorize.js'
 import { runDaemon } from './daemon.js'
-import { getBookmarkCount } from './markdown.js'
+import { getItemCount } from './markdown.js'
+import { allSources, getConfiguredSources, getAllFolders } from './sources/index.js'
 
 const DEFAULT_VAULT = join(homedir(), 'Obsidian', 'xmarks')
 
@@ -53,27 +53,38 @@ async function main() {
 
     case 'sync': {
       const config = requireConfig(vaultPath)
-      const creds = getDecryptedCredentials(config)
+      const sourceFilter = flags.source
 
-      if (!creds.authToken || !creds.ct0) {
-        console.error('  Twitter credentials not configured. Run: xmarks setup')
+      let sources = getConfiguredSources(config)
+      if (sourceFilter) {
+        sources = sources.filter(s => s.name === sourceFilter)
+        if (sources.length === 0) {
+          const available = allSources.map(s => s.name).join(', ')
+          console.error(`  Unknown or unconfigured source: ${sourceFilter}`)
+          console.error(`  Available sources: ${available}`)
+          process.exit(1)
+        }
+      }
+
+      if (sources.length === 0) {
+        console.error('  No sources configured. Run: xmarks setup')
         process.exit(1)
       }
 
-      console.log('\n  Syncing bookmarks...')
-      const result = await syncBookmarks(
-        config.vaultPath,
-        creds.authToken,
-        creds.ct0,
-        msg => console.log(`  ${msg}`),
-      )
+      console.log(`\n  Syncing ${sources.map(s => s.name).join(', ')}...`)
 
-      if (result.error) {
-        console.error(`  Error: ${result.error}`)
-        process.exit(1)
+      for (const source of sources) {
+        const result = await source.sync(config.vaultPath, config, msg => console.log(`  ${msg}`))
+
+        if (result.error) {
+          console.error(`  ${source.name} error: ${result.error}`)
+          continue
+        }
+
+        console.log(`  ${source.name}: ${result.imported} imported, ${result.skipped} skipped, ${result.mediaDownloaded} media`)
       }
 
-      console.log(`\n  Done: ${result.imported} imported, ${result.skipped} skipped, ${result.mediaDownloaded} thumbnails`)
+      console.log('')
       break
     }
 
@@ -86,19 +97,21 @@ async function main() {
         process.exit(1)
       }
 
-      const counts = getBookmarkCount(config.vaultPath)
+      const folders = getAllFolders(config)
+      const counts = getItemCount(config.vaultPath, folders)
       if (counts.uncategorized === 0) {
-        console.log('\n  All bookmarks are already categorized!')
+        console.log('\n  All items are already categorized!')
         break
       }
 
       const cost = estimateCost(counts.uncategorized, config.model)
-      console.log(`\n  ${counts.uncategorized} uncategorized bookmarks`)
+      console.log(`\n  ${counts.uncategorized} uncategorized items across ${folders.join(', ')}`)
       console.log(`  Estimated cost: ${cost} (using ${config.model})`)
       console.log(`  Categorizing...\n`)
 
-      const result = await categorizeBookmarks(
+      const result = await categorizeItems(
         config.vaultPath,
+        folders,
         creds.apiKey,
         config.model,
         (done, total) => {
@@ -128,22 +141,35 @@ async function main() {
         break
       }
 
-      const counts = getBookmarkCount(config.vaultPath)
+      const folders = getAllFolders(config)
+      const counts = getItemCount(config.vaultPath, folders)
       const creds = getDecryptedCredentials(config)
+      const configured = getConfiguredSources(config)
 
       console.log('\n  xmarks status')
       console.log('  ─────────────')
       console.log(`  Vault: ${config.vaultPath}`)
-      console.log(`  Bookmarks: ${counts.total} total (${counts.categorized} categorized, ${counts.uncategorized} pending)`)
+      console.log(`  Items: ${counts.total} total (${counts.categorized} categorized, ${counts.uncategorized} pending)`)
+      console.log(`  Sources: ${configured.length > 0 ? configured.map(s => s.name).join(', ') : 'none configured'}`)
+
+      // Per-source counts
+      for (const source of configured) {
+        const sourceCounts = getItemCount(config.vaultPath, [source.folder])
+        console.log(`    ${source.name}: ${sourceCounts.total} items (${source.folder}/)`)
+      }
+
       console.log(`  Sync interval: ${config.syncIntervalMinutes} minutes`)
       console.log(`  Model: ${config.model}`)
       console.log(`  Twitter auth: ${creds.authToken ? 'configured' : 'not set'}`)
       console.log(`  Anthropic key: ${creds.apiKey ? 'configured' : 'not set'}`)
 
+      if (config.sources?.youtube?.enabled) {
+        console.log(`  YouTube watch: ${config.sources.youtube.watchPath}`)
+      }
+
       // Show last sync from log
       try {
         const { readFileSync } = await import('fs')
-        const { join } = await import('path')
         const log = readFileSync(join(config.vaultPath, 'sync.log'), 'utf8')
         const lines = log.trim().split('\n')
         const lastLine = lines[lines.length - 1]
@@ -159,27 +185,32 @@ async function main() {
     case 'help':
     default: {
       console.log(`
-  xmarks — Live X bookmark sync to Obsidian
+  xmarks — Content ingest system for Obsidian
 
   Usage: xmarks <command> [options]
 
   Commands:
-    setup                 Interactive setup (cookies, API key, vault path)
-    sync                  One-shot sync of bookmarks
-    categorize            Run AI categorization on uncategorized bookmarks
+    setup                 Interactive setup (sources, API keys)
+    sync                  Sync all configured sources
+    categorize            AI categorize uncategorized items
     daemon                Background sync on interval (default: 5 min)
-    status                Show sync status and bookmark counts
+    status                Show sync status and item counts
 
   Options:
     --vault <path>        Vault path (default: ${DEFAULT_VAULT})
+    --source <name>       Filter to a specific source (twitter, youtube)
     --interval <minutes>  Override sync interval for daemon
+
+  Sources:
+    twitter               X/Twitter bookmarks (requires cookies)
+    youtube               YouTube transcripts (watches a directory)
 
   Examples:
     xmarks setup
     xmarks sync
+    xmarks sync --source youtube
     xmarks categorize
     xmarks daemon
-    xmarks daemon --interval 10
     xmarks status
 `)
       break

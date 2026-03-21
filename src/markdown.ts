@@ -8,6 +8,54 @@ function getIndexPath(vaultPath: string): string {
   return join(vaultPath, TWEET_INDEX_FILE)
 }
 
+// Generic index functions for multi-source support
+
+export function loadItemIndex(vaultPath: string, indexFile: string): Set<string> {
+  const indexPath = join(vaultPath, indexFile)
+  if (!existsSync(indexPath)) return new Set()
+  const content = readFileSync(indexPath, 'utf8')
+  return new Set(content.split('\n').filter(Boolean))
+}
+
+export function appendToItemIndex(vaultPath: string, indexFile: string, id: string): void {
+  appendFileSync(join(vaultPath, indexFile), id + '\n', 'utf8')
+}
+
+export function getUncategorizedItems(vaultPath: string, folders: string[]): { filepath: string; content: string }[] {
+  const uncategorized: { filepath: string; content: string }[] = []
+  for (const folder of folders) {
+    const dir = join(vaultPath, folder)
+    if (!existsSync(dir)) continue
+    const files = readdirSync(dir).filter(f => f.endsWith('.md'))
+    for (const file of files) {
+      const filepath = join(dir, file)
+      const content = readFileSync(filepath, 'utf8')
+      if (content.includes('categorized: false')) {
+        uncategorized.push({ filepath, content })
+      }
+    }
+  }
+  return uncategorized
+}
+
+export function getItemCount(vaultPath: string, folders: string[]): { total: number; categorized: number; uncategorized: number } {
+  let total = 0
+  let categorized = 0
+  let uncategorized = 0
+  for (const folder of folders) {
+    const dir = join(vaultPath, folder)
+    if (!existsSync(dir)) continue
+    const files = readdirSync(dir).filter(f => f.endsWith('.md'))
+    for (const file of files) {
+      const content = readFileSync(join(dir, file), 'utf8')
+      total++
+      if (content.includes('categorized: false')) uncategorized++
+      else categorized++
+    }
+  }
+  return { total, categorized, uncategorized }
+}
+
 export function loadTweetIndex(vaultPath: string): Set<string> {
   const indexPath = getIndexPath(vaultPath)
   if (!existsSync(indexPath)) {
