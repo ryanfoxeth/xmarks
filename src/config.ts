@@ -8,7 +8,8 @@ export interface SourceConfig {
 }
 
 export interface YouTubeSourceConfig extends SourceConfig {
-  watchPath: string
+  watchPath?: string
+  watchPaths?: string[]
 }
 
 export interface SourcesConfig {

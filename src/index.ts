@@ -164,7 +164,10 @@ async function main() {
       console.log(`  Anthropic key: ${creds.apiKey ? 'configured' : 'not set'}`)
 
       if (config.sources?.youtube?.enabled) {
-        console.log(`  YouTube watch: ${config.sources.youtube.watchPath}`)
+        const ytPaths = config.sources.youtube.watchPaths ?? (config.sources.youtube.watchPath ? [config.sources.youtube.watchPath] : [])
+        for (const p of ytPaths) {
+          console.log(`  YouTube watch: ${p}`)
+        }
       }
 
       // Show last sync from log

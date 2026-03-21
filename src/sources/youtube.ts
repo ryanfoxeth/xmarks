@@ -98,23 +98,29 @@ export const youtubeSource: Source = {
 
   isConfigured(config: XmarksConfig): boolean {
     const ytConfig = config.sources?.youtube
-    return !!(ytConfig?.enabled && ytConfig?.watchPath)
+    if (!ytConfig?.enabled) return false
+    return !!(ytConfig.watchPath || (ytConfig.watchPaths && ytConfig.watchPaths.length > 0))
   },
 
   async sync(vaultPath: string, config: XmarksConfig, onProgress?: (msg: string) => void): Promise<SyncResult> {
     const ytConfig = config.sources?.youtube
-    if (!ytConfig?.watchPath) {
-      return { source: 'youtube', imported: 0, skipped: 0, mediaDownloaded: 0, error: 'YouTube watchPath not configured' }
+    if (!ytConfig) {
+      return { source: 'youtube', imported: 0, skipped: 0, mediaDownloaded: 0, error: 'YouTube not configured' }
     }
 
-    const jsonDir = join(ytConfig.watchPath, 'json')
-    const summaryDir = join(ytConfig.watchPath, 'ai_summary')
+    // Support both single watchPath and array of watchPaths
+    const paths: string[] = []
+    if (ytConfig.watchPaths && ytConfig.watchPaths.length > 0) {
+      paths.push(...ytConfig.watchPaths)
+    } else if (ytConfig.watchPath) {
+      paths.push(ytConfig.watchPath)
+    }
+
+    if (paths.length === 0) {
+      return { source: 'youtube', imported: 0, skipped: 0, mediaDownloaded: 0, error: 'No YouTube watch paths configured' }
+    }
+
     const youtubeDir = join(vaultPath, 'youtube')
-
-    if (!existsSync(jsonDir)) {
-      return { source: 'youtube', imported: 0, skipped: 0, mediaDownloaded: 0, error: `JSON directory not found: ${jsonDir}` }
-    }
-
     if (!existsSync(youtubeDir)) {
       mkdirSync(youtubeDir, { recursive: true })
     }
@@ -126,52 +132,62 @@ export const youtubeSource: Source = {
     const index = loadItemIndex(vaultPath, '.youtube-ids')
     onProgress?.(`[youtube] Loaded index: ${index.size} known videos`)
 
-    const jsonFiles = readdirSync(jsonDir).filter(f => f.endsWith('.json'))
-    onProgress?.(`[youtube] Found ${jsonFiles.length} JSON files`)
+    for (const watchPath of paths) {
+      const jsonDir = join(watchPath, 'json')
+      const summaryDir = join(watchPath, 'ai_summary')
 
-    for (const jsonFile of jsonFiles) {
-      try {
-        const raw = readFileSync(join(jsonDir, jsonFile), 'utf8')
-        const video: YouTubeVideo = JSON.parse(raw)
+      if (!existsSync(jsonDir)) {
+        onProgress?.(`[youtube] Skipping ${watchPath} — json/ not found`)
+        continue
+      }
 
-        if (!video.video_id) {
+      const jsonFiles = readdirSync(jsonDir).filter(f => f.endsWith('.json'))
+      onProgress?.(`[youtube] ${watchPath}: ${jsonFiles.length} JSON files`)
+
+      for (const jsonFile of jsonFiles) {
+        try {
+          const raw = readFileSync(join(jsonDir, jsonFile), 'utf8')
+          const video: YouTubeVideo = JSON.parse(raw)
+
+          if (!video.video_id) {
+            skipped++
+            continue
+          }
+
+          if (index.has(video.video_id)) {
+            skipped++
+            continue
+          }
+
+          // Look for matching AI summary
+          const summaryFilename = jsonFile.replace(/\.json$/, '.txt')
+          const summaryPath = join(summaryDir, summaryFilename)
+          let aiSummary: string | null = null
+          if (existsSync(summaryPath)) {
+            aiSummary = readFileSync(summaryPath, 'utf8')
+          }
+
+          const filename = generateFilename(video)
+          const content = videoToMarkdown(video, aiSummary)
+          writeFileSync(join(youtubeDir, filename), content, 'utf8')
+
+          index.add(video.video_id)
+          appendToItemIndex(vaultPath, '.youtube-ids', video.video_id)
+          imported++
+
+          // Download thumbnail
+          if (video.thumbnail) {
+            const dl = await downloadMedia(vaultPath, [{
+              url: video.thumbnail,
+              filename: `yt-${video.video_id}.jpg`,
+            }])
+            mediaDownloaded += dl
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          onProgress?.(`[youtube] Error processing ${jsonFile}: ${msg}`)
           skipped++
-          continue
         }
-
-        if (index.has(video.video_id)) {
-          skipped++
-          continue
-        }
-
-        // Look for matching AI summary
-        const summaryFilename = jsonFile.replace(/\.json$/, '.txt')
-        const summaryPath = join(summaryDir, summaryFilename)
-        let aiSummary: string | null = null
-        if (existsSync(summaryPath)) {
-          aiSummary = readFileSync(summaryPath, 'utf8')
-        }
-
-        const filename = generateFilename(video)
-        const content = videoToMarkdown(video, aiSummary)
-        writeFileSync(join(youtubeDir, filename), content, 'utf8')
-
-        index.add(video.video_id)
-        appendToItemIndex(vaultPath, '.youtube-ids', video.video_id)
-        imported++
-
-        // Download thumbnail
-        if (video.thumbnail) {
-          const dl = await downloadMedia(vaultPath, [{
-            url: video.thumbnail,
-            filename: `yt-${video.video_id}.jpg`,
-          }])
-          mediaDownloaded += dl
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        onProgress?.(`[youtube] Error processing ${jsonFile}: ${msg}`)
-        skipped++
       }
     }
 
