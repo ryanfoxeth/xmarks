@@ -4,6 +4,7 @@ import { join } from 'path'
 import { loadConfig, getDecryptedCredentials, ensureVaultStructure } from './config.js'
 import { runSetup } from './setup.js'
 import { categorizeItems, estimateCost } from './categorize.js'
+import { enrichItems, getEnrichmentCount } from './enrich.js'
 import { runDaemon } from './daemon.js'
 import { getItemCount } from './markdown.js'
 import { allSources, getConfiguredSources, getAllFolders } from './sources/index.js'
@@ -123,6 +124,28 @@ async function main() {
       break
     }
 
+    case 'enrich': {
+      const config = requireConfig(vaultPath)
+      const counts = getEnrichmentCount(config.vaultPath)
+
+      if (counts.needsEnrichment === 0) {
+        console.log('\n  No link-only bookmarks to enrich!')
+        console.log(`  (${counts.enriched} already enriched)`)
+        break
+      }
+
+      console.log(`\n  ${counts.needsEnrichment} link-only bookmarks to enrich`)
+      console.log(`  (${counts.enriched} already enriched)`)
+      console.log(`  Fetching article content...\n`)
+
+      const result = await enrichItems(config.vaultPath, config, (done, total, msg) => {
+        process.stdout.write(`\r  [${done}/${total}] ${msg ?? ''}`.padEnd(100))
+      })
+
+      console.log(`\n\n  Done: ${result.enriched} enriched, ${result.failed} failed`)
+      break
+    }
+
     case 'daemon': {
       const config = requireConfig(vaultPath)
       if (flags.interval) {
@@ -156,6 +179,11 @@ async function main() {
       for (const source of configured) {
         const sourceCounts = getItemCount(config.vaultPath, [source.folder])
         console.log(`    ${source.name}: ${sourceCounts.total} items (${source.folder}/)`)
+      }
+
+      const enrichCounts = getEnrichmentCount(config.vaultPath)
+      if (enrichCounts.needsEnrichment > 0 || enrichCounts.enriched > 0) {
+        console.log(`  Enrichment: ${enrichCounts.enriched} enriched, ${enrichCounts.needsEnrichment} pending`)
       }
 
       console.log(`  Sync interval: ${config.syncIntervalMinutes} minutes`)
@@ -196,6 +224,7 @@ async function main() {
     setup                 Interactive setup (sources, API keys)
     sync                  Sync all configured sources
     categorize            AI categorize uncategorized items
+    enrich                Fetch article content for link-only bookmarks
     daemon                Background sync on interval (default: 5 min)
     status                Show sync status and item counts
 

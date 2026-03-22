@@ -3,6 +3,7 @@ import type { XmarksConfig } from './config.js'
 import { getDecryptedCredentials } from './config.js'
 import { getConfiguredSources, getAllFolders } from './sources/index.js'
 import { categorizeItems } from './categorize.js'
+import { enrichItems, getEnrichmentCount } from './enrich.js'
 import { getItemCount } from './markdown.js'
 
 function sendNotification(title: string, message: string): void {
@@ -114,6 +115,14 @@ async function runSyncCycle(config: XmarksConfig, sources: ReturnType<typeof get
       config.model,
     )
     console.log(`  [${now}] Categorized: ${catResult.categorized} done, ${catResult.errors} errors`)
+  }
+
+  // Auto-enrich link-only bookmarks
+  const enrichCounts = getEnrichmentCount(config.vaultPath)
+  if (enrichCounts.needsEnrichment > 0) {
+    console.log(`  [${now}] Enriching ${enrichCounts.needsEnrichment} link-only bookmarks...`)
+    const enrichResult = await enrichItems(config.vaultPath, config)
+    console.log(`  [${now}] Enriched: ${enrichResult.enriched} done, ${enrichResult.failed} failed`)
   }
 
   const folders = getAllFolders(config)
